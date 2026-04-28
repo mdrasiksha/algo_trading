@@ -1,123 +1,147 @@
-import os, time, requests
+import logging
+import os
+import tempfile
+import time
+from pathlib import Path
+from typing import Optional
+
 import pyotp
-from kiteconnect import KiteConnect
+import requests
 from dotenv import load_dotenv
+from kiteconnect import KiteConnect
 
 load_dotenv()
 
-API_KEY = os.getenv("KITE_API_KEY")
-API_SECRET = os.getenv("KITE_API_SECRET")
-USER_ID = os.getenv("KITE_USER_ID")
-PASSWORD = os.getenv("KITE_PASSWORD")
-TOTP_SECRET = os.getenv("KITE_TOTP_SECRET")
 
-TG_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TG_CHAT = os.getenv("TELEGRAM_CHAT_ID")
+LOGGER = logging.getLogger("auto_login")
 
 
-# 🔹 Telegram Alert
-def send_telegram(msg):
+def require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing env variable: {name}")
+    return value
+
+
+def optional_env(name: str) -> Optional[str]:
+    value = os.getenv(name)
+    return value if value else None
+
+
+API_KEY = require_env("KITE_API_KEY")
+API_SECRET = require_env("KITE_API_SECRET")
+USER_ID = require_env("KITE_USER_ID")
+PASSWORD = require_env("KITE_PASSWORD")
+TOTP_SECRET = require_env("KITE_TOTP_SECRET")
+TG_TOKEN = optional_env("TELEGRAM_BOT_TOKEN")
+TG_CHAT = optional_env("TELEGRAM_CHAT_ID")
+
+
+def send_telegram(msg: str) -> None:
+    if not TG_TOKEN or not TG_CHAT:
+        return
     try:
         url = f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage"
-        requests.post(url, data={"chat_id": TG_CHAT, "text": msg})
-    except:
-        pass
+        requests.post(url, data={"chat_id": TG_CHAT, "text": msg}, timeout=5)
+    except Exception:
+        LOGGER.exception("telegram error")
 
 
-# 🔹 Generate TOTP
-def get_totp():
-    totp = pyotp.TOTP(TOTP_SECRET)
-    return totp.now()
+def get_totp() -> str:
+    return pyotp.TOTP(TOTP_SECRET).now()
 
 
-# 🔹 Auto Login Function
-def auto_login():
+def post_json(session: requests.Session, url: str, data: dict) -> dict:
+    response = session.post(url, data=data, timeout=10)
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("status") != "success":
+        raise RuntimeError(f"Request failed for {url}: {payload}")
+    return payload
+
+
+def auto_login() -> str:
     session = requests.Session()
 
-    # Step 1: Login request
-    login_url = "https://kite.zerodha.com/api/login"
+    login_payload = post_json(
+        session,
+        "https://kite.zerodha.com/api/login",
+        {"user_id": USER_ID, "password": PASSWORD},
+    )
+    request_id = login_payload["data"]["request_id"]
 
-    data = {
-        "user_id": USER_ID,
-        "password": PASSWORD
-    }
+    post_json(
+        session,
+        "https://kite.zerodha.com/api/twofa",
+        {
+            "user_id": USER_ID,
+            "request_id": request_id,
+            "twofa_value": get_totp(),
+        },
+    )
 
-    res = session.post(login_url, data=data)
-    login_json = res.json()
-
-    if login_json.get("status") != "success":
-        raise Exception("Login failed")
-
-    request_id = login_json["data"]["request_id"]
-
-    # Step 2: TOTP verification
-    totp = get_totp()
-
-    twofa_url = "https://kite.zerodha.com/api/twofa"
-
-    twofa_data = {
-        "user_id": USER_ID,
-        "request_id": request_id,
-        "twofa_value": totp
-    }
-
-    res2 = session.post(twofa_url, data=twofa_data)
-    twofa_json = res2.json()
-
-    if twofa_json.get("status") != "success":
-        raise Exception("TOTP failed")
-
-    # Step 3: Get request_token from redirect
     kite = KiteConnect(api_key=API_KEY)
-
-    login_redirect = kite.login_url()
-    res3 = session.get(login_redirect, allow_redirects=True)
-
-    final_url = res3.url
+    redirect_response = session.get(kite.login_url(), allow_redirects=True, timeout=10)
+    redirect_response.raise_for_status()
+    final_url = redirect_response.url
 
     if "request_token=" not in final_url:
-        raise Exception("Request token not found")
+        raise RuntimeError("request_token missing in redirect")
 
     request_token = final_url.split("request_token=")[1].split("&")[0]
-
-    # Step 4: Generate access token
-    data = kite.generate_session(request_token, api_secret=API_SECRET)
-
-    access_token = data["access_token"]
-
-    return access_token
+    token_data = kite.generate_session(request_token, api_secret=API_SECRET)
+    return token_data["access_token"]
 
 
-# 🔹 Save token to file
-def save_token(token):
-    with open("access_token.txt", "w") as f:
-        f.write(token)
+def write_atomic(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
+        tmp.write(content)
+        temp_name = tmp.name
+    os.replace(temp_name, path)
 
 
-# 🔹 Update .env
-def update_env(token):
-    lines = []
-    with open(".env", "r") as f:
-        lines = f.readlines()
+def update_env_access_token(env_path: Path, token: str) -> None:
+    if not env_path.exists():
+        raise FileNotFoundError(f"{env_path} not found")
+    lines = env_path.read_text().splitlines()
+    replaced = False
+    output = []
+    for line in lines:
+        if line.startswith("KITE_ACCESS_TOKEN="):
+            output.append(f"KITE_ACCESS_TOKEN={token}")
+            replaced = True
+        else:
+            output.append(line)
+    if not replaced:
+        output.append(f"KITE_ACCESS_TOKEN={token}")
+    write_atomic(env_path, "\n".join(output) + "\n")
 
-    with open(".env", "w") as f:
-        for line in lines:
-            if line.startswith("KITE_ACCESS_TOKEN"):
-                f.write(f"KITE_ACCESS_TOKEN={token}\n")
-            else:
-                f.write(line)
+
+def run_with_retry(max_attempts: int = 3, delay_seconds: int = 5) -> str:
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return auto_login()
+        except Exception:
+            LOGGER.exception("login attempt %s failed", attempt)
+            if attempt == max_attempts:
+                raise
+            time.sleep(delay_seconds * attempt)
+    raise RuntimeError("unreachable")
 
 
-# 🔹 MAIN
 if __name__ == "__main__":
+    logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
+    env_file = Path(".env")
+    token_file = Path("access_token.txt")
+
     try:
-        token = auto_login()
-        save_token(token)
-        update_env(token)
-
-        send_telegram("✅ Zerodha login successful. Token refreshed.")
-        print("SUCCESS:", token)
-
-    except Exception as e:
-        send_telegram(f"❌ Login failed: {e}")
-        print("ERROR:", e)
+        token = run_with_retry()
+        write_atomic(token_file, token + "\n")
+        update_env_access_token(env_file, token)
+        send_telegram("✅ Zerodha login successful. Access token refreshed.")
+        LOGGER.info("Access token refreshed")
+    except Exception as exc:
+        send_telegram(f"❌ Zerodha auto-login failed: {exc}")
+        LOGGER.exception("auto-login failed")
+        raise
