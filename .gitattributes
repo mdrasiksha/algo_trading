@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+# Explicitly keep source/config/docs as text for diff/PR rendering
+*.py text eol=lf
+*.md text eol=lf
+*.env text eol=lf
+*.example text eol=lf
