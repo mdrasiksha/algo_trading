@@ -1,0 +1,1 @@
+print(f"PAPER TRADE: SELL {qty} {symbol}")
