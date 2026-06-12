@@ -1,24 +1,14 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+import argparse
 
-with open("access_token.txt") as f:
-    ACCESS_TOKEN = f.read().strip()
+from kite_utils import find_nearest_option_pair, get_kite_client
 
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
+parser = argparse.ArgumentParser(description="Find nearest-expiry NIFTY CE/PE symbols for a strike")
+parser.add_argument("strike", type=int, help="Strike price, e.g. 23550")
+args = parser.parse_args()
 
-ATM_STRIKE = 23550
+kite = get_kite_client()
+pair = find_nearest_option_pair(kite.instruments("NFO"), args.strike)
 
-instruments = kite.instruments("NFO")
-
-for ins in instruments:
-    if (
-        ins["name"] == "NIFTY"
-        and ins["strike"] == ATM_STRIKE
-        and ins["instrument_type"] in ["CE", "PE"]
-    ):
-        print(
-            ins["tradingsymbol"],
-            ins["instrument_type"],
-            ins["expiry"]
-        )
+print("Expiry:", pair.expiry)
+print("CE:", pair.ce_symbol)
+print("PE:", pair.pe_symbol)

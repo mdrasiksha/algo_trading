@@ -1,17 +1,16 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+import argparse
 
-with open("access_token.txt") as f:
-    ACCESS_TOKEN = f.read().strip()
+from kite_utils import get_kite_client
 
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
+parser = argparse.ArgumentParser(description="Check NFO lot size for a trading symbol")
+parser.add_argument("symbol", help="NFO trading symbol, e.g. NIFTY2660223550CE")
+args = parser.parse_args()
 
-instruments = kite.instruments("NFO")
+kite = get_kite_client()
 
-symbol = "NIFTY2660223550CE"
-
-for ins in instruments:
-    if ins["tradingsymbol"] == symbol:
-        print("Lot Size:", ins["lot_size"])
+for instrument in kite.instruments("NFO"):
+    if instrument["tradingsymbol"] == args.symbol:
+        print("Lot Size:", instrument["lot_size"])
         break
+else:
+    raise SystemExit(f"Symbol not found: {args.symbol}")

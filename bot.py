@@ -44,6 +44,8 @@ class Config:
     order_retry: int = 3
     api_retry: int = 3
     cooldown_seconds: int = 300
+    paper_trading: bool = True
+    min_available_margin: float = 0.0
 
 
 @dataclass
@@ -244,7 +246,25 @@ class TradingBot:
             )
         return symbol
 
+    def _available_margin(self) -> float:
+        margins = self._api_call(self.kite.margins)
+        return float(margins["equity"]["available"].get("live_balance") or 0.0)
+
+    def _assert_margin_before_entry(self) -> None:
+        if self.config.paper_trading or self.config.min_available_margin <= 0:
+            return
+        available = self._available_margin()
+        if available < self.config.min_available_margin:
+            raise RuntimeError(
+                f"Available margin {available:.2f} is below required floor {self.config.min_available_margin:.2f}"
+            )
+
     def _place_market_order(self, symbol: str, qty: int, side: str) -> float:
+        if self.config.paper_trading:
+            ltp = self._ltp(f"{self.config.derivatives_exchange}:{symbol}")
+            self.logger.info("PAPER %s %s qty=%s assumed_fill=%.2f", side, symbol, qty, ltp)
+            return ltp
+
         for attempt in range(1, self.config.order_retry + 1):
             try:
                 order_id = self._api_call(
@@ -315,6 +335,7 @@ class TradingBot:
             sell_symbol = self._option_symbol(pe_sell, "PE")
             buy_symbol = self._option_symbol(pe_buy, "PE")
 
+        self._assert_margin_before_entry()
         buy_entry = self._place_market_order(buy_symbol, self.config.lot_size, "BUY")
         sell_entry = self._place_market_order(sell_symbol, self.config.lot_size, "SELL")
 
@@ -327,7 +348,8 @@ class TradingBot:
             buy_entry=buy_entry,
         )
 
-        max_risk_rupees = max(0.0, (position.sell_entry - position.buy_entry) * position.qty)
+        net_credit = max(0.0, position.sell_entry - position.buy_entry)
+        max_risk_rupees = max(0.0, (self.config.hedge_dist - net_credit) * position.qty)
         if max_risk_rupees > self.config.max_loss_per_trade:
             realized_pnl = self._close_position_and_get_realized_pnl(position)
             self.state.daily_pnl += realized_pnl
@@ -342,7 +364,11 @@ class TradingBot:
         self.state.position = position
         self.state.trades += 1
         self.state.last_entry_ts = now
-        self._telegram(f"ENTRY {spread_kind} spread: SELL {sell_symbol} @ {sell_entry:.2f} / BUY {buy_symbol} @ {buy_entry:.2f}")
+        mode = "PAPER" if self.config.paper_trading else "LIVE"
+        self._telegram(
+            f"{mode} ENTRY {spread_kind} spread: SELL {sell_symbol} @ {sell_entry:.2f} / "
+            f"BUY {buy_symbol} @ {buy_entry:.2f}, max_risk={max_risk_rupees:.0f}"
+        )
 
     def _exit_position(self, reason: str) -> None:
         pos = self.state.position
@@ -458,6 +484,23 @@ def _optional_env(name: str) -> Optional[str]:
     return value if value else None
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return int(value) if value else default
+
+
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    return float(value) if value else default
+
+
 def _setup_logging() -> None:
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO"),
@@ -482,6 +525,11 @@ if __name__ == "__main__":
         access_token=_require_env("KITE_ACCESS_TOKEN"),
         telegram_token=_optional_env("TELEGRAM_BOT_TOKEN"),
         telegram_chat_id=_optional_env("TELEGRAM_CHAT_ID"),
+        lot_size=_env_int("DEFAULT_LOT_SIZE", 50),
+        max_daily_loss=_env_float("MAX_DAILY_LOSS", 8000.0),
+        max_loss_per_trade=_env_float("MAX_LOSS_PER_TRADE", 3000.0),
+        paper_trading=_env_bool("PAPER_TRADING", True),
+        min_available_margin=_env_float("MIN_AVAILABLE_MARGIN", 0.0),
     )
     trading_bot = TradingBot(cfg)
     _install_signal_handlers(trading_bot)

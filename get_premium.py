@@ -1,62 +1,22 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from kite_utils import get_atm_strike, get_kite_client, get_ltp, get_nifty_spot, get_option_pair_for_atm
 
-with open("access_token.txt") as f:
-    ACCESS_TOKEN = f.read().strip()
+kite = get_kite_client()
+nifty_price = get_nifty_spot(kite)
+atm = get_atm_strike(nifty_price)
+pair = get_option_pair_for_atm(kite, nifty_price)
 
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
-
-# Step 1: Get NIFTY Spot Price
-ltp = kite.ltp("NSE:NIFTY 50")
-nifty_price = ltp["NSE:NIFTY 50"]["last_price"]
-
-# Step 2: Calculate ATM Strike
-atm = int(round(nifty_price / 50) * 50)
+ce_instrument = f"NFO:{pair.ce_symbol}"
+pe_instrument = f"NFO:{pair.pe_symbol}"
+ce_price = get_ltp(kite, ce_instrument)
+pe_price = get_ltp(kite, pe_instrument)
+combined = ce_price + pe_price
+sl_level = combined * 1.60
 
 print(f"NIFTY Price: {nifty_price}")
 print(f"ATM Strike: {atm}")
-
-# Step 3: Find nearest expiry CE and PE
-instruments = kite.instruments("NFO")
-
-ce_symbol = None
-pe_symbol = None
-nearest_expiry = None
-
-for ins in instruments:
-    if (
-        ins["name"] == "NIFTY"
-        and ins["strike"] == atm
-        and ins["instrument_type"] in ["CE", "PE"]
-    ):
-        if nearest_expiry is None:
-            nearest_expiry = ins["expiry"]
-
-        if ins["expiry"] == nearest_expiry:
-            if ins["instrument_type"] == "CE":
-                ce_symbol = ins["tradingsymbol"]
-
-            if ins["instrument_type"] == "PE":
-                pe_symbol = ins["tradingsymbol"]
-
-print("CE:", ce_symbol)
-print("PE:", pe_symbol)
-
-# Step 4: Fetch premiums
-quotes = kite.ltp([
-    f"NFO:{ce_symbol}",
-    f"NFO:{pe_symbol}"
-])
-
-ce_price = quotes[f"NFO:{ce_symbol}"]["last_price"]
-pe_price = quotes[f"NFO:{pe_symbol}"]["last_price"]
-
-combined = ce_price + pe_price
-
-# Step 5: Calculate SL
-sl_level = combined * 1.60
-
+print("Expiry:", pair.expiry)
+print("CE:", pair.ce_symbol)
+print("PE:", pair.pe_symbol)
 print()
 print(f"CE Premium = {ce_price}")
 print(f"PE Premium = {pe_price}")
