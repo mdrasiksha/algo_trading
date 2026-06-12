@@ -1,9 +1,5 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from trading_bot.kite_client import create_kite
+from trading_bot.market_data import NIFTY_SPOT, get_last_price
 
-kite = KiteConnect(api_key=API_KEY)
-
-with open("access_token.txt") as f:
-    kite.set_access_token(f.read().strip())
-
-print(kite.ltp("NSE:NIFTY 50"))
+kite = create_kite()
+print(get_last_price(kite, NIFTY_SPOT))

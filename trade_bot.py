@@ -1,10 +1,19 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from trading_bot.kite_client import create_kite, kite_retry
+from trading_bot.logging_config import configure_logging
+from trading_bot.notifications import TelegramNotifier
+from trading_bot.settings import load_settings
 
-with open("access_token.txt") as f:
-    access_token = f.read().strip()
+configure_logging()
+settings = load_settings()
+notifier = TelegramNotifier(settings.telegram_bot_token, settings.telegram_chat_id)
+kite = create_kite(settings)
 
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(access_token)
 
-print(kite.profile())
+@kite_retry()
+def get_profile():
+    return kite.profile()
+
+
+profile = get_profile()
+notifier.send(f"Kite profile loaded for {profile.get('user_name', 'unknown user')}")
+print(profile)

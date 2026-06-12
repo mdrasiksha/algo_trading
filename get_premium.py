@@ -1,61 +1,30 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from datetime import date
 
-with open("access_token.txt") as f:
-    ACCESS_TOKEN = f.read().strip()
+from trading_bot.instruments import find_options_by_strike, get_nfo_instruments
+from trading_bot.kite_client import create_kite
+from trading_bot.market_data import NIFTY_SPOT, get_atm_strike, get_option_premiums
+from trading_bot.risk import RiskLimits, combined_stop_loss
 
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
+kite = create_kite()
 
-# Step 1: Get NIFTY Spot Price
-ltp = kite.ltp("NSE:NIFTY 50")
-nifty_price = ltp["NSE:NIFTY 50"]["last_price"]
-
-# Step 2: Calculate ATM Strike
-atm = int(round(nifty_price / 50) * 50)
-
+# Step 1: Get NIFTY Spot Price and ATM strike
+nifty_price, atm = get_atm_strike(kite, NIFTY_SPOT, 50)
 print(f"NIFTY Price: {nifty_price}")
 print(f"ATM Strike: {atm}")
 
-# Step 3: Find nearest expiry CE and PE
-instruments = kite.instruments("NFO")
-
-ce_symbol = None
-pe_symbol = None
-nearest_expiry = None
-
-for ins in instruments:
-    if (
-        ins["name"] == "NIFTY"
-        and ins["strike"] == atm
-        and ins["instrument_type"] in ["CE", "PE"]
-    ):
-        if nearest_expiry is None:
-            nearest_expiry = ins["expiry"]
-
-        if ins["expiry"] == nearest_expiry:
-            if ins["instrument_type"] == "CE":
-                ce_symbol = ins["tradingsymbol"]
-
-            if ins["instrument_type"] == "PE":
-                pe_symbol = ins["tradingsymbol"]
+# Step 2: Find nearest unexpired CE and PE
+instruments = get_nfo_instruments(kite)
+ce, pe = find_options_by_strike(instruments, "NIFTY", atm, min_expiry=date.today())
+ce_symbol = ce["tradingsymbol"]
+pe_symbol = pe["tradingsymbol"]
 
 print("CE:", ce_symbol)
 print("PE:", pe_symbol)
 
-# Step 4: Fetch premiums
-quotes = kite.ltp([
-    f"NFO:{ce_symbol}",
-    f"NFO:{pe_symbol}"
-])
-
-ce_price = quotes[f"NFO:{ce_symbol}"]["last_price"]
-pe_price = quotes[f"NFO:{pe_symbol}"]["last_price"]
-
+# Step 3: Fetch premiums in one batched API call
+ce_price, pe_price = get_option_premiums(kite, ce_symbol, pe_symbol)
 combined = ce_price + pe_price
-
-# Step 5: Calculate SL
-sl_level = combined * 1.60
+sl_level = combined_stop_loss(ce_price, pe_price, RiskLimits(max_daily_loss=0.0))
 
 print()
 print(f"CE Premium = {ce_price}")
