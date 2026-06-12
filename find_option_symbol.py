@@ -1,24 +1,13 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from datetime import date
 
-with open("access_token.txt") as f:
-    ACCESS_TOKEN = f.read().strip()
-
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
+from trading_bot.instruments import find_options_by_strike, get_nfo_instruments
+from trading_bot.kite_client import create_kite
 
 ATM_STRIKE = 23550
 
-instruments = kite.instruments("NFO")
+kite = create_kite()
+instruments = get_nfo_instruments(kite)
+ce, pe = find_options_by_strike(instruments, "NIFTY", ATM_STRIKE, min_expiry=date.today())
 
-for ins in instruments:
-    if (
-        ins["name"] == "NIFTY"
-        and ins["strike"] == ATM_STRIKE
-        and ins["instrument_type"] in ["CE", "PE"]
-    ):
-        print(
-            ins["tradingsymbol"],
-            ins["instrument_type"],
-            ins["expiry"]
-        )
+for ins in (ce, pe):
+    print(ins["tradingsymbol"], ins["instrument_type"], ins["expiry"])

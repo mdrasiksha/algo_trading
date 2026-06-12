@@ -1,11 +1,8 @@
 from kiteconnect import KiteConnect
 
-api_key = "ju2pbmjqoruniz6r"
+from trading_bot.settings import load_settings
 
-kite = KiteConnect(api_key=api_key)
+settings = load_settings(require_token=False)
+kite = KiteConnect(api_key=settings.api_key)
 
 print(kite.login_url())
-
-
-
-

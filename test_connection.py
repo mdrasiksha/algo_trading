@@ -1,13 +1,11 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from trading_bot.kite_client import create_kite, kite_retry
 
-kite = KiteConnect(api_key=API_KEY)
+kite = create_kite()
 
-with open("access_token.txt") as f:
-    access_token = f.read().strip()
 
-kite.set_access_token(access_token)
+@kite_retry()
+def get_profile():
+    return kite.profile()
 
-profile = kite.profile()
 
-print(profile)
+print(get_profile())

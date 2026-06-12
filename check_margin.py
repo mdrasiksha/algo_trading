@@ -1,13 +1,13 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from trading_bot.kite_client import create_kite, kite_retry
 
-with open("access_token.txt") as f:
-    ACCESS_TOKEN = f.read().strip()
+kite = create_kite()
 
-kite = KiteConnect(api_key=API_KEY)
-kite.set_access_token(ACCESS_TOKEN)
 
-margins = kite.margins()
+@kite_retry()
+def get_live_balance() -> float:
+    margins = kite.margins()
+    return float(margins["equity"]["available"]["live_balance"])
+
 
 print("Available Margin:")
-print(margins["equity"]["available"]["live_balance"])
+print(get_live_balance())
