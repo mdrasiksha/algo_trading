@@ -1,9 +1,4 @@
-from kiteconnect import KiteConnect
-from config import API_KEY
+from kite_utils import get_kite_client
 
-kite = KiteConnect(api_key=API_KEY)
-
-with open("access_token.txt") as f:
-    kite.set_access_token(f.read().strip())
-
+kite = get_kite_client()
 print(kite.ltp("NSE:NIFTY 50"))

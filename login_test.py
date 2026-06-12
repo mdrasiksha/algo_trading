@@ -1,11 +1,6 @@
 from kiteconnect import KiteConnect
 
-api_key = "ju2pbmjqoruniz6r"
+from config import API_KEY
 
-kite = KiteConnect(api_key=api_key)
-
+kite = KiteConnect(api_key=API_KEY)
 print(kite.login_url())
-
-
-
-

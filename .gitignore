@@ -1,13 +1,27 @@
 # Virtual Environment
 .venv/
+venv/
 
 # Python cache
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# PyCharm
+# IDE / editor
 .idea/
+.vscode/
 
-# Secrets
+# Secrets and local runtime files
+.env
+.env.*
+!.env.example
 access_token.txt
-config.py
+*.token
+*.pem
+*.key
+
+# Logs and runtime output
+logs/
+*.log
+*.sqlite3
+*.db
